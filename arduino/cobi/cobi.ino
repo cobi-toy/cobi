@@ -3,30 +3,74 @@
 #include <Adafruit_PN532.h>
 #include "pitches.h"
 
-// NFC library instance
+//==================================================================================================
+// NFC
+//==================================================================================================
+
+// define just the pins connected to the IRQ and reset lines for I2C connection
 #define PN532_IRQ   (7)
 #define PN532_RESET (8)
+
+// use an I2C connection:
 Adafruit_PN532 nfc(PN532_IRQ, PN532_RESET);
+
+// hack used to not block process
 const int NFC_MAX_RETRIES = 10;
 
-// Acelerometer parameters
-const int MPU_addr=0x68;  // I2C address of the MPU-6050
+//==================================================================================================
+// acelerometer
+//==================================================================================================
+
+// I2C address of the MPU-6050
+const int MPU_addr=0x68;
+
+// constant used to determine the
 const int16_t IMPACT_DIFF = 2000;
+
+// variable to store current and previous acelerometer axes values
 int16_t AcX,AcY,AcZ;
 int16_t pAcX,pAcY,pAcZ;
 
+//==================================================================================================
 // LED
+//==================================================================================================
+
 const int greenLEDPin = 5;
 const int redLEDPin = 6;
 const int blueLEDPin = 3;
 
+//==================================================================================================
+// audio
+//==================================================================================================
+
+// notes in the melody:
+int melodyA[] = {
+  NOTE_G6, NOTE_E6, NOTE_A6, NOTE_D6, NOTE_C6, NOTE_G7
+};
+
+int melodyB[] = {
+  NOTE_G1, NOTE_E1, NOTE_A1, NOTE_D1, NOTE_C1, NOTE_G2
+};
+
+// note durations: 4 = quarter note, 8 = eighth note, etc.:
+int noteDurations[] = {
+  8, 8, 8, 8, 8, 4
+};
+
+
+//==================================================================================================
+// CoBi setup
+//==================================================================================================
+
 void setup(void) {
-  // LED
+  Serial.begin(115200);
+  
+  // LED pin configuration
   pinMode(greenLEDPin, OUTPUT);
   pinMode(redLEDPin, OUTPUT);
   pinMode(blueLEDPin, OUTPUT);
   
-  // ACELEROMETER
+  // acelerometer configuration
   Wire.begin();
   Wire.beginTransmission(MPU_addr);
   Wire.write(0x6B);  // PWR_MGMT_1 register
@@ -34,23 +78,36 @@ void setup(void) {
   Wire.endTransmission(true);
 
   // NFC
-  Serial.begin(115200);
+  prepareNFC();
+}
+
+// prepare NFC board to be used by CoBi
+void prepareNFC() {
   nfc.begin();
 
+  // check if it is possible to use NFC reader
   uint32_t versiondata = nfc.getFirmwareVersion();
   if (! versiondata) {
     Serial.print("Didn't find PN53x board");
-    while (1); // halt
+
+    // do not continue program
+    while (1);
   }
-  // Got ok data, print it out!
+  
   Serial.print("Found chip PN5"); Serial.println((versiondata>>24) & 0xFF, HEX); 
   Serial.print("Firmware ver. "); Serial.print((versiondata>>16) & 0xFF, DEC); 
   Serial.print('.'); Serial.println((versiondata>>8) & 0xFF, DEC);
   
   // configure board to read RFID tags
   nfc.SAMConfig();
+
+  // hack to allow code to be executed even if no tag is being read
   nfc.setPassiveActivationRetries(NFC_MAX_RETRIES);
 }
+
+//==================================================================================================
+// CoBi main loop
+//==================================================================================================
 
 void loop(void) {
   handleAcelerometer();
@@ -97,12 +154,39 @@ void handleAcelerometer() {
 
 void hitFeedback() {
   // change LED color
+  randomLEDColor();
+
+  // play sound
+  playMelody(melodyA);
+  playMelody(melodyB);
+}
+
+void playMelody(int melody[]) {
+  // iterate over the notes of the melody:
+  for (int thisNote = 0; thisNote < 6; thisNote++) {
+    
+    // to calculate the note duration, take one second divided by the note type.
+    //e.g. quarter note = 1000 / 4, eighth note = 1000/8, etc.
+    int noteDuration = 1000 / noteDurations[thisNote];
+    tone(9, melody[thisNote], noteDuration);
+
+    // to distinguish the notes, set a minimum time between them.
+    // the note's duration + 30% seems to work well:
+    int pauseBetweenNotes = noteDuration * 1.30;
+    delay(pauseBetweenNotes);
+    
+    // stop the tone playing:
+    noTone(9);
+
+    // alternate LED color on each note
+    randomLEDColor();
+  }
+}
+
+void randomLEDColor() {
   analogWrite(redLEDPin, random(255));
   analogWrite(greenLEDPin, random(255));
   analogWrite(blueLEDPin, random(255));
-
-  // play sound
-  tone(9, NOTE_G3, 500);
 }
 
 void readNFC() {
@@ -121,20 +205,21 @@ void readNFC() {
     Serial.print("  UID Length: ");Serial.print(uidLength, DEC);Serial.println(" bytes");
     Serial.print("  UID Value: ");
     nfc.PrintHex(uid, uidLength);
+      playMelody(melodyB);
+      playMelody(melodyB);
+      playMelody(melodyB);
     
-    if (uidLength == 4)
-    {
-      // We probably have a Mifare Classic card ... 
-      uint32_t cardid = uid[0];
-      cardid <<= 8;
-      cardid |= uid[1];
-      cardid <<= 8;
-      cardid |= uid[2];  
-      cardid <<= 8;
-      cardid |= uid[3]; 
-      Serial.print("Seems to be a Mifare Classic card #");
-      Serial.println(cardid);
-    }
-    Serial.println("");
+//    if (uidLength == 4) {
+//      // We probably have a Mifare Classic card ... 
+//      uint32_t cardid = uid[0];
+//      cardid <<= 8;
+//      cardid |= uid[1];
+//      cardid <<= 8;
+//      cardid |= uid[2];  
+//      cardid <<= 8;
+//      cardid |= uid[3]; 
+//      Serial.print("Seems to be a Mifare Classic card #");
+//      Serial.println(cardid);
+//    }
   }
 }
